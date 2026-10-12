@@ -1,0 +1,10 @@
+{
+  "E001": "Account is frozen - check freeze code on account master",
+  "E002": "Insufficient balance - verify available vs ledger balance",
+  "E003": "Transaction limit exceeded - check daily transaction limits",
+  "E004": "Invalid account number - ensure the account number is correct",
+  "E005": "Unauthorized access - verify user credentials and permissions",
+  "E006": "Duplicate transaction - check for repeated transaction requests",
+  "E010": "Account is closed",
+  "E007": "Customer is suspended due to KYC"
+}
