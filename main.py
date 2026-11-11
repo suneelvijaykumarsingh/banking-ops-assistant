@@ -4,6 +4,8 @@ import psycopg
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import fatal_dashboard
+
 app = FastAPI()
 DB = "dbname=bankops"
 SEED_FILE = Path("error_codes.json")
@@ -30,6 +32,18 @@ def init_db():
                 )
 
 init_db()
+
+def hints_for(codes: list[str]) -> dict[str, str]:
+    if not codes:
+        return {}
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT code, hint FROM error_codes WHERE code = ANY(%s)", (codes,)
+        ).fetchall()
+    return dict(rows)
+
+fatal_dashboard.hint_lookup = hints_for
+app.include_router(fatal_dashboard.router)
 
 class ErrorCode(BaseModel):
     code: str
