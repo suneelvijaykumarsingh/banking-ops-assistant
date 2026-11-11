@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fatal Errors 24h</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b75;
+    --border: #e2e2e6; --accent: #2457c5; --heat: 214, 48, 49;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #131316; --panel: #1c1c21; --text: #ececf0; --muted: #9a9aa6;
+            --border: #2e2e36; --accent: #7aa2ff; --heat: 255, 99, 99; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+  .kpi, section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  section { margin-bottom: 16px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  td.n, th.n { text-align: right; }
+  td.hint { white-space: normal; min-width: 220px; color: var(--muted); }
+  tfoot td { font-weight: 600; }
+  a { color: var(--accent); }
+  code { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--bg);
+         padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); word-break: break-all; }
+  .copy { padding: 2px 8px; font-size: 12px; margin-left: 6px; }
+  .heat td.c { text-align: center; min-width: 30px; font-size: 12px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .err { color: rgb(var(--heat)); }
+  td.line { white-space: normal; min-width: 420px; }
+  td.line code { word-break: normal; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Fatal errors · last 24 hours</h1>
+    <div><span class="muted" id="gen"></span> <button id="refresh">Refresh</button></div>
+  </header>
+
+  <div class="kpis" id="kpis"></div>
+
+  <section>
+    <h2>Kibana links &amp; log paths</h2>
+    <div class="scroll"><table id="links">
+      <thead><tr><th>Source</th><th>Kibana (24h, FATAL)</th><th>Log path</th><th>Shell filter</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Pivot</h2>
+    <div class="tabs">
+      <button data-view="source" aria-pressed="true">Error code × source</button>
+      <button data-view="hour" aria-pressed="false">Error code × hour</button>
+    </div>
+    <div class="scroll"><table id="pivot"></table></div>
+    <p class="muted" id="pivot-note"></p>
+  </section>
+
+  <section>
+    <h2>Latest fatal lines</h2>
+    <div class="scroll"><table id="latest">
+      <thead><tr><th>Time</th><th>Source</th><th>Code</th><th>File</th><th>Line</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+</main>
+<script>
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let data = null, view = 'source';
+
+function copyBtn(text) {
+  return `<button class="copy" data-copy="${esc(text)}">Copy</button>`;
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-copy]');
+  if (t) navigator.clipboard?.writeText(t.dataset.copy).then(() => { t.textContent = 'Copied'; setTimeout(() => t.textContent = 'Copy', 1200); });
+  const v = e.target.closest('[data-view]');
+  if (v) { view = v.dataset.view; document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', b === v)); renderPivot(); }
+});
+
+function heat(n, max) {
+  if (!n) return '';
+  const a = 0.15 + 0.75 * (n / max);
+  return `style="background: rgba(var(--heat), ${a.toFixed(2)})"`;
+}
+
+function renderPivot() {
+  const t = document.getElementById('pivot');
+  if (!data || !data.rows.length) { t.innerHTML = '<tbody><tr><td class="muted">No FATAL errors found in the last 24h.</td></tr></tbody>'; return; }
+  if (view === 'source') {
+    const cols = data.sources;
+    t.className = '';
+    t.innerHTML =
+      `<thead><tr><th>Code</th><th>Hint</th>${cols.map(c => `<th class="n">${esc(c)}</th>`).join('')}<th class="n">Total</th></tr></thead>` +
+      `<tbody>${data.rows.map(r => `<tr><td><b>${esc(r.code)}</b></td><td class="hint">${esc(r.hint)}</td>${cols.map(c => `<td class="n">${r.by_source[c] || ''}</td>`).join('')}<td class="n"><b>${r.total}</b></td></tr>`).join('')}</tbody>` +
+      `<tfoot><tr><td>Total</td><td></td>${cols.map(c => `<td class="n">${data.source_totals[c]}</td>`).join('')}<td class="n">${data.total}</td></tr></tfoot>`;
+  } else {
+    const max = Math.max(1, ...data.rows.flatMap(r => r.by_hour));
+    t.className = 'heat';
+    t.innerHTML =
+      `<thead><tr><th>Code</th>${data.hours.map(h => `<th class="n" title="${esc(h)}">${esc(h.slice(-5, -3))}</th>`).join('')}<th class="n">Total</th></tr></thead>` +
+      `<tbody>${data.rows.map(r => `<tr><td><b>${esc(r.code)}</b></td>${r.by_hour.map((n, i) => `<td class="c" title="${esc(data.hours[i])}: ${n}" ${heat(n, max)}>${n || ''}</td>`).join('')}<td class="n"><b>${r.total}</b></td></tr>`).join('')}</tbody>` +
+      `<tfoot><tr><td>Total</td>${data.hour_totals.map(n => `<td class="c">${n || ''}</td>`).join('')}<td class="n">${data.total}</td></tr></tfoot>`;
+  }
+}
+
+async function load() {
+  document.getElementById('gen').textContent = 'Loading…';
+  try {
+    const [links, piv] = await Promise.all([fetch('/fatal/links').then(r => r.json()), fetch('/fatal/pivot').then(r => r.json())]);
+    data = piv;
+    document.querySelector('#links tbody').innerHTML = links.sources.map(s => `<tr>
+      <td><b>${esc(s.source)}</b></td>
+      <td><a href="${esc(s.kibana_url)}" target="_blank" rel="noopener">Open Discover</a>${copyBtn(s.kibana_url)}</td>
+      <td><code>${esc(s.log_path)}</code>${copyBtn(s.log_path)}</td>
+      <td><code>${esc(s.grep)}</code>${copyBtn(s.grep)}</td></tr>`).join('');
+
+    const top = piv.rows[0];
+    const peak = piv.hour_totals.reduce((m, n, i) => n > m.n ? {n, i} : m, {n: 0, i: -1});
+    const worstSrc = Object.entries(piv.source_totals).sort((a, b) => b[1] - a[1])[0];
+    document.getElementById('kpis').innerHTML = [
+      ['Fatal errors (24h)', piv.total],
+      ['Distinct codes', piv.rows.length],
+      ['Top code', top ? `${top.code} (${top.total})` : '—'],
+      ['Noisiest source', worstSrc && worstSrc[1] ? `${worstSrc[0]} (${worstSrc[1]})` : '—'],
+      ['Peak hour', peak.i >= 0 ? `${piv.hours[peak.i].slice(-5)} (${peak.n})` : '—'],
+    ].map(([k, v]) => `<div class="kpi"><div class="muted">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
+
+    renderPivot();
+    const missing = piv.sources_without_files;
+    document.getElementById('pivot-note').innerHTML = missing.length
+      ? `<span class="err">No log files matched for: ${missing.map(esc).join(', ')}</span> — check the log path or rely on the Kibana link.`
+      : `Files scanned: ${Object.entries(piv.files_scanned).map(([k, v]) => `${esc(k)} ${v}`).join(' · ')}`;
+
+    document.querySelector('#latest tbody').innerHTML = piv.latest.map(e => `<tr>
+      <td>${esc(e.ts.replace('T', ' '))}</td><td>${esc(e.source)}</td><td><b>${esc(e.code)}</b></td>
+      <td title="${esc(e.file)}"><code>${esc(e.file.split('/').pop())}</code>${copyBtn(e.file)}</td><td class="line"><code>${esc(e.line)}</code></td></tr>`).join('')
+      || '<tr><td colspan="5" class="muted">None</td></tr>';
+    document.getElementById('gen').textContent = 'Generated ' + piv.generated_at.replace('T', ' ');
+  } catch (err) {
+    document.getElementById('gen').innerHTML = `<span class="err">Failed to load: ${esc(err.message)}</span>`;
+  }
+}
+document.getElementById('refresh').addEventListener('click', load);
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "kibana_base_url": "https://kibana.example.internal",
+  "fatal_query": "log.level:\"FATAL\"",
+  "sources": [
+    {
+      "name": "core-banking",
+      "index_pattern": "core-banking-*",
+      "service_field": "service.name",
+      "log_path": "/var/log/bankops/core-banking/*.log"
+    },
+    {
+      "name": "payments",
+      "index_pattern": "payments-*",
+      "service_field": "service.name",
+      "log_path": "/var/log/bankops/payments/*.log"
+    },
+    {
+      "name": "eod-batch",
+      "index_pattern": "eod-batch-*",
+      "service_field": "service.name",
+      "log_path": "/var/log/bankops/eod/*.log"
+    }
+  ]
+}
